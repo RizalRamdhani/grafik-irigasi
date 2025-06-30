@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Grafik Irigasi Otomatis</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <h2>📈 Grafik Irigasi Otomatis (Realtime)</h2>
+  <canvas id="kelembabanChart"></canvas>
+  <canvas id="airChart"></canvas>
+  <canvas id="volumeChart"></canvas>
+  <script>
+    const firebaseConfig = { databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/" };
+    firebase.initializeApp(firebaseConfig);
+    const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
+
+    const createChart = (ctx, label, color) => new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
+      options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
+    });
+
+    const kelembaban = createChart(document.getElementById('kelembabanChart').getContext('2d'), 'Kelembaban Tanah (%)', 'green');
+    const air = createChart(document.getElementById('airChart').getContext('2d'), 'Ketinggian Air (cm)', 'blue');
+    const volume = createChart(document.getElementById('volumeChart').getContext('2d'), 'Volume Aktual (L)', 'orange');
+
+    const addData = (chart, label, value) => {
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(value);
+      if (chart.data.labels.length > 20) chart.data.labels.shift(), chart.data.datasets[0].data.shift();
+      chart.update();
+    };
+
+    dataRef.on('value', snap => {
+      const d = snap.val();
+      const now = new Date().toLocaleTimeString('id-ID');
+      if (d) {
+        addData(kelembaban, now, d.KelembabanTanah || 0);
+        addData(air, now, d.KetinggianAir || 0);
+        addData(volume, now, d.VolumeAktual || 0);
+      }
+    });
+  </script>
+</body>
+</html>

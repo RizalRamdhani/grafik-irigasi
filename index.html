@@ -7,130 +7,124 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
-    button { margin-right: 10px; margin-bottom: 20px; }
+    body{font-family:Arial, sans-serif;padding:20px;}
+    canvas{margin-bottom:40px;max-width:100%;height:auto;}
+    button{margin-right:10px;margin-bottom:20px;}
   </style>
 </head>
 <body>
-  <h2>📈 Grafik Irigasi Otomatis</h2>
+  <h2>📈 Grafik Irigasi Otomatis</h2>
   <div>
-    <button onclick="loadData('realtime')">Realtime (per Detik)</button>
-    <button onclick="loadData('daily')">Per Hari</button>
-    <button onclick="loadData('weekly')">Per Minggu</button>
+    <button onclick="loadRealtime()">Realtime (per Detik)</button>
+    <button onclick="loadToday()">Hari Ini (semua waktu)</button>
   </div>
   <canvas id="kelembabanChart"></canvas>
   <canvas id="airChart"></canvas>
   <canvas id="volumeChart"></canvas>
 
-  <script>
-    const firebaseConfig = {
-      databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+<script>
+  /* ---------- 1. Inisialisasi Firebase ---------- */
+  const firebaseConfig={databaseURL:"https://irigasi-9a2b9-default-rtdb.firebaseio.com/"};
+  firebase.initializeApp(firebaseConfig);
+  const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
 
-    const createChart = (ctx, label, color) => new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.3 }]
-      },
-      options: {
-        scales: {
-          x: { title: { display: true, text: 'Waktu' } },
-          y: { beginAtZero: true }
-        }
-      }
+  /* ---------- 2. Buat 3 chart ---------- */
+  const kelembaban = makeChart('kelembabanChart','Kelembaban Tanah (%)','green');
+  const air        = makeChart('airChart','Ketinggian Air (cm)','blue');
+  const volume     = makeChart('volumeChart','Volume Aktual (L)','orange');
+
+  function makeChart(canvasId,label,color){
+    return new Chart(document.getElementById(canvasId).getContext('2d'),{
+      type:'line',
+      data:{labels:[],datasets:[{label,data:[],borderColor:color,fill:false,tension:0.25}]},
+      options:{scales:{y:{beginAtZero:true},x:{title:{display:true,text:'Waktu'}}}}
+    });
+  }
+  function updateChart(chart,labels,values){
+    chart.data.labels=labels;
+    chart.data.datasets[0].data=values;
+    chart.update();
+  }
+
+  /* ---------- 3. Realtime (push per detik) ---------- */
+  let listener=null;
+  function loadRealtime(){
+    removeListener();
+    clearAllCharts();
+    listener = dataRef.on('value',snap=>{
+      const entry = snap.val();
+      if(!entry) return;
+      const ts = entry.timestamp ?? Date.now();                // fallback: now
+      const tLabel = new Date(ts).toLocaleTimeString('id-ID');
+
+      pushPoint(kelembaban,tLabel,entry.KelembabanTanah||0);
+      pushPoint(air       ,tLabel,entry.KetinggianAir ||0);
+      pushPoint(volume    ,tLabel,entry.VolumeAktual   ||0);
+    });
+  }
+  function pushPoint(chart,label,val){
+    chart.data.labels.push(label);
+    chart.data.datasets[0].data.push(val);
+    if(chart.data.labels.length>100) {      // simpan max 100 titik agar tidak berat
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update();
+  }
+
+  /* ---------- 4. Hari ini (ambil snapshot sekali, filter tanggal) ---------- */
+  async function loadToday(){
+    removeListener();
+    clearAllCharts();
+
+    const snap = await dataRef.once('value');
+    const all  = snap.val() || {};
+
+    const todayStr = new Date().toLocaleDateString('id-ID');
+    const lab = [], kArr=[], aArr=[], vArr=[];
+
+    Object.entries(all).forEach(([key,val])=>{
+      const ts = getTimestamp(key,val);
+      if(!ts) return;
+      const d  = new Date(ts);
+      if(d.toLocaleDateString('id-ID')!==todayStr) return;   // skip kalau bukan hari ini
+
+      lab.push(d.toLocaleTimeString('id-ID'));
+      kArr.push(val.KelembabanTanah||0);
+      aArr.push(val.KetinggianAir ||0);
+      vArr.push(val.VolumeAktual  ||0);
     });
 
-    const kelembaban = createChart(document.getElementById('kelembabanChart').getContext('2d'), 'Kelembaban Tanah (%)', 'green');
-    const air = createChart(document.getElementById('airChart').getContext('2d'), 'Ketinggian Air (cm)', 'blue');
-    const volume = createChart(document.getElementById('volumeChart').getContext('2d'), 'Volume Aktual (L)', 'orange');
+    updateChart(kelembaban,lab,kArr);
+    updateChart(air       ,lab,aArr);
+    updateChart(volume    ,lab,vArr);
+  }
 
-    function updateChart(chart, labels, values) {
-      chart.data.labels = labels;
-      chart.data.datasets[0].data = values;
-      chart.update();
-    }
+  /* ---------- 5. Util ---------- */
+  function removeListener(){
+    if(listener){ dataRef.off('value',listener); listener=null; }
+  }
+  function clearAllCharts(){
+    [kelembaban,air,volume].forEach(c=>{
+      c.data.labels=[]; c.data.datasets[0].data=[]; c.update();
+    });
+  }
+  // Mengambil timestamp dari field atau dari key
+  function getTimestamp(key,obj){
+    if(obj.timestamp) return obj.timestamp;
+    // contoh key "2025-07-26_10:30:12"
+    const re=/(\d{4})-(\d{2})-(\d{2})_(\d{2}):(\d{2}):(\d{2})/;
+    const m=key.match(re);
+    if(!m) return null;
+    return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}+07:00`).getTime();
+  }
 
-    async function loadData(mode) {
-      const snapshot = await db.ref("IrigasiOtomatis/History").once('value');
-      const rawData = snapshot.val();
-      if (!rawData) return;
-
-      const kelembabanData = [], airData = [], volumeData = [], labels = [];
-
-      const grouped = {};
-
-      Object.entries(rawData).forEach(([key, entry]) => {
-        if (!entry.timestamp) return;
-
-        const date = new Date(entry.timestamp);
-        const formattedTime = date.toLocaleTimeString('id-ID');
-        const formattedDate = date.toLocaleDateString('id-ID');
-
-        if (mode === 'realtime') {
-          labels.push(formattedTime);
-          kelembabanData.push(entry.KelembabanTanah || 0);
-          airData.push(entry.KetinggianAir || 0);
-          volumeData.push(entry.VolumeAktual || 0);
-        }
-
-        if (mode === 'daily') {
-          const groupKey = formattedDate;
-          if (!grouped[groupKey]) {
-            grouped[groupKey] = { kelembaban: [], air: [], volume: [] };
-          }
-          grouped[groupKey].kelembaban.push(entry.KelembabanTanah || 0);
-          grouped[groupKey].air.push(entry.KetinggianAir || 0);
-          grouped[groupKey].volume.push(entry.VolumeAktual || 0);
-        }
-
-        if (mode === 'weekly') {
-          const weekNumber = getWeekNumber(date);
-          const yearWeek = `${date.getFullYear()}-W${weekNumber}`;
-          if (!grouped[yearWeek]) {
-            grouped[yearWeek] = { kelembaban: [], air: [], volume: [] };
-          }
-          grouped[yearWeek].kelembaban.push(entry.KelembabanTanah || 0);
-          grouped[yearWeek].air.push(entry.KetinggianAir || 0);
-          grouped[yearWeek].volume.push(entry.VolumeAktual || 0);
-        }
-      });
-
-      if (mode === 'daily' || mode === 'weekly') {
-        Object.entries(grouped).forEach(([groupLabel, values]) => {
-          labels.push(groupLabel);
-          kelembabanData.push(average(values.kelembaban));
-          airData.push(average(values.air));
-          volumeData.push(average(values.volume));
-        });
-      }
-
-      updateChart(kelembaban, labels, kelembabanData);
-      updateChart(air, labels, airData);
-      updateChart(volume, labels, volumeData);
-    }
-
-    function average(arr) {
-      if (!arr.length) return 0;
-      return arr.reduce((a, b) => a + b, 0) / arr.length;
-    }
-
-    function getWeekNumber(d) {
-      d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-      d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-      const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-      return weekNo;
-    }
-
-    // Load realtime data by default
-    loadData('realtime');
-  </script>
+  /* ---------- 6. Mulai dengan realtime ---------- */
+  loadRealtime();
+</script>
 </body>
 </html>
+
 
 
 

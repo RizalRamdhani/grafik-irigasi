@@ -7,124 +7,161 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
   <style>
-    body{font-family:Arial, sans-serif;padding:20px;}
-    canvas{margin-bottom:40px;max-width:100%;height:auto;}
-    button{margin-right:10px;margin-bottom:20px;}
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
+    h3 { margin-top: 50px; }
   </style>
 </head>
 <body>
-  <h2>📈 Grafik Irigasi Otomatis</h2>
-  <div>
-    <button onclick="loadRealtime()">Realtime (per Detik)</button>
-    <button onclick="loadToday()">Hari Ini (semua waktu)</button>
-  </div>
-  <canvas id="kelembabanChart"></canvas>
-  <canvas id="airChart"></canvas>
-  <canvas id="volumeChart"></canvas>
+  <h2>📈 Grafik Irigasi Otomatis</h2>
 
-<script>
-  /* ---------- 1. Inisialisasi Firebase ---------- */
-  const firebaseConfig={databaseURL:"https://irigasi-9a2b9-default-rtdb.firebaseio.com/"};
-  firebase.initializeApp(firebaseConfig);
-  const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
+  <h3>Real-time (Perdetik)</h3>
+  <canvas id="kelembabanRealtime"></canvas>
+  <canvas id="airRealtime"></canvas>
+  <canvas id="volumeRealtime"></canvas>
 
-  /* ---------- 2. Buat 3 chart ---------- */
-  const kelembaban = makeChart('kelembabanChart','Kelembaban Tanah (%)','green');
-  const air        = makeChart('airChart','Ketinggian Air (cm)','blue');
-  const volume     = makeChart('volumeChart','Volume Aktual (L)','orange');
+  <h3>Rata-rata Per Hari (Hari Ini)</h3>
+  <canvas id="dailyAvgChart"></canvas>
 
-  function makeChart(canvasId,label,color){
-    return new Chart(document.getElementById(canvasId).getContext('2d'),{
-      type:'line',
-      data:{labels:[],datasets:[{label,data:[],borderColor:color,fill:false,tension:0.25}]},
-      options:{scales:{y:{beginAtZero:true},x:{title:{display:true,text:'Waktu'}}}}
-    });
-  }
-  function updateChart(chart,labels,values){
-    chart.data.labels=labels;
-    chart.data.datasets[0].data=values;
-    chart.update();
-  }
+  <h3>Rata-rata Per Minggu (7 Hari Terakhir)</h3>
+  <canvas id="weeklyAvgChart"></canvas>
 
-  /* ---------- 3. Realtime (push per detik) ---------- */
-  let listener=null;
-  function loadRealtime(){
-    removeListener();
-    clearAllCharts();
-    listener = dataRef.on('value',snap=>{
-      const entry = snap.val();
-      if(!entry) return;
-      const ts = entry.timestamp ?? Date.now();                // fallback: now
-      const tLabel = new Date(ts).toLocaleTimeString('id-ID');
+  <script>
+    // Inisialisasi Firebase
+    const firebaseConfig = {
+      databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
 
-      pushPoint(kelembaban,tLabel,entry.KelembabanTanah||0);
-      pushPoint(air       ,tLabel,entry.KetinggianAir ||0);
-      pushPoint(volume    ,tLabel,entry.VolumeAktual   ||0);
-    });
-  }
-  function pushPoint(chart,label,val){
-    chart.data.labels.push(label);
-    chart.data.datasets[0].data.push(val);
-    if(chart.data.labels.length>100) {      // simpan max 100 titik agar tidak berat
-      chart.data.labels.shift();
-      chart.data.datasets[0].data.shift();
-    }
-    chart.update();
-  }
-
-  /* ---------- 4. Hari ini (ambil snapshot sekali, filter tanggal) ---------- */
-  async function loadToday(){
-    removeListener();
-    clearAllCharts();
-
-    const snap = await dataRef.once('value');
-    const all  = snap.val() || {};
-
-    const todayStr = new Date().toLocaleDateString('id-ID');
-    const lab = [], kArr=[], aArr=[], vArr=[];
-
-    Object.entries(all).forEach(([key,val])=>{
-      const ts = getTimestamp(key,val);
-      if(!ts) return;
-      const d  = new Date(ts);
-      if(d.toLocaleDateString('id-ID')!==todayStr) return;   // skip kalau bukan hari ini
-
-      lab.push(d.toLocaleTimeString('id-ID'));
-      kArr.push(val.KelembabanTanah||0);
-      aArr.push(val.KetinggianAir ||0);
-      vArr.push(val.VolumeAktual  ||0);
+    // Utility Chart Builder
+    const createChart = (ctx, label, color) => new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
+      options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
     });
 
-    updateChart(kelembaban,lab,kArr);
-    updateChart(air       ,lab,aArr);
-    updateChart(volume    ,lab,vArr);
-  }
+    // Chart Real-time
+    const kelembabanChart = createChart(document.getElementById('kelembabanRealtime'), 'Kelembaban Tanah (%)', 'green');
+    const airChart = createChart(document.getElementById('airRealtime'), 'Ketinggian Air (cm)', 'blue');
+    const volumeChart = createChart(document.getElementById('volumeRealtime'), 'Volume Aktual (L)', 'orange');
 
-  /* ---------- 5. Util ---------- */
-  function removeListener(){
-    if(listener){ dataRef.off('value',listener); listener=null; }
-  }
-  function clearAllCharts(){
-    [kelembaban,air,volume].forEach(c=>{
-      c.data.labels=[]; c.data.datasets[0].data=[]; c.update();
+    const addData = (chart, label, value) => {
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(value);
+      if (chart.data.labels.length > 20) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+    };
+
+    // Realtime update
+    dataRef.on('value', snapshot => {
+      const data = snapshot.val();
+      const now = new Date();
+      const label = now.toLocaleTimeString('id-ID');
+
+      if (data) {
+        addData(kelembabanChart, label, data.KelembabanTanah || 0);
+        addData(airChart, label, data.KetinggianAir || 0);
+        addData(volumeChart, label, data.VolumeAktual || 0);
+      }
     });
-  }
-  // Mengambil timestamp dari field atau dari key
-  function getTimestamp(key,obj){
-    if(obj.timestamp) return obj.timestamp;
-    // contoh key "2025-07-26_10:30:12"
-    const re=/(\d{4})-(\d{2})-(\d{2})_(\d{2}):(\d{2}):(\d{2})/;
-    const m=key.match(re);
-    if(!m) return null;
-    return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}+07:00`).getTime();
-  }
 
-  /* ---------- 6. Mulai dengan realtime ---------- */
-  loadRealtime();
-</script>
+    // Data Historis (rata-rata harian dan mingguan)
+    const dailyAvgChart = new Chart(document.getElementById('dailyAvgChart'), {
+      type: 'bar',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Kelembaban (%)', data: [], backgroundColor: 'green' },
+          { label: 'Ketinggian Air (cm)', data: [], backgroundColor: 'blue' },
+          { label: 'Volume (L)', data: [], backgroundColor: 'orange' }
+        ]
+      },
+      options: {
+        responsive: true,
+        scales: { x: { stacked: true }, y: { beginAtZero: true } }
+      }
+    });
+
+    const weeklyAvgChart = new Chart(document.getElementById('weeklyAvgChart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Kelembaban (%)', data: [], borderColor: 'green', fill: false },
+          { label: 'Ketinggian Air (cm)', data: [], borderColor: 'blue', fill: false },
+          { label: 'Volume (L)', data: [], borderColor: 'orange', fill: false }
+        ]
+      },
+      options: {
+        responsive: true,
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+
+    // Ambil data historis dari path yang sama
+    dataRef.parent.on('value', (snapshot) => {
+      const allData = snapshot.val();
+      const daily = {}, weekly = {};
+
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+
+      for (let key in allData.DataHistory || {}) {
+        const entry = allData.DataHistory[key];
+        const time = new Date(entry.timestamp);
+        const dateStr = time.toISOString().split('T')[0];
+
+        // Daily (hari ini)
+        if (dateStr === today) {
+          const hour = time.getHours();
+          if (!daily[hour]) daily[hour] = { kelembaban: 0, air: 0, volume: 0, count: 0 };
+          daily[hour].kelembaban += entry.KelembabanTanah || 0;
+          daily[hour].air += entry.KetinggianAir || 0;
+          daily[hour].volume += entry.VolumeAktual || 0;
+          daily[hour].count++;
+        }
+
+        // Weekly
+        const diffDays = (now - time) / (1000 * 60 * 60 * 24);
+        if (diffDays <= 7) {
+          if (!weekly[dateStr]) weekly[dateStr] = { kelembaban: 0, air: 0, volume: 0, count: 0 };
+          weekly[dateStr].kelembaban += entry.KelembabanTanah || 0;
+          weekly[dateStr].air += entry.KetinggianAir || 0;
+          weekly[dateStr].volume += entry.VolumeAktual || 0;
+          weekly[dateStr].count++;
+        }
+      }
+
+      // Tampilkan rata-rata harian
+      dailyAvgChart.data.labels = [];
+      dailyAvgChart.data.datasets.forEach(ds => ds.data = []);
+      for (let hour in daily) {
+        dailyAvgChart.data.labels.push(`${hour}:00`);
+        dailyAvgChart.data.datasets[0].data.push((daily[hour].kelembaban / daily[hour].count).toFixed(2));
+        dailyAvgChart.data.datasets[1].data.push((daily[hour].air / daily[hour].count).toFixed(2));
+        dailyAvgChart.data.datasets[2].data.push((daily[hour].volume / daily[hour].count).toFixed(2));
+      }
+      dailyAvgChart.update();
+
+      // Tampilkan rata-rata mingguan
+      weeklyAvgChart.data.labels = [];
+      weeklyAvgChart.data.datasets.forEach(ds => ds.data = []);
+      const sortedWeekly = Object.keys(weekly).sort();
+      for (let d of sortedWeekly) {
+        weeklyAvgChart.data.labels.push(d);
+        weeklyAvgChart.data.datasets[0].data.push((weekly[d].kelembaban / weekly[d].count).toFixed(2));
+        weeklyAvgChart.data.datasets[1].data.push((weekly[d].air / weekly[d].count).toFixed(2));
+        weeklyAvgChart.data.datasets[2].data.push((weekly[d].volume / weekly[d].count).toFixed(2));
+      }
+      weeklyAvgChart.update();
+    });
+  </script>
 </body>
 </html>
-
 
 
 

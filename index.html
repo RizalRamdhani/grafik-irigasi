@@ -1,106 +1,52 @@
 <!DOCTYPE html>
-<html lang="id">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Grafik Irigasi Otomatis - Realtime</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grafik Irigasi Otomatis</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
-    canvas { background: #fff; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 30px; width: 100%; max-width: 100%; }
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
   </style>
 </head>
 <body>
-
-  <h2>📊 Grafik Irigasi Otomatis (Realtime)</h2>
+  <h2>📈 Grafik Irigasi Otomatis (Realtime)</h2>
   <canvas id="kelembabanChart"></canvas>
   <canvas id="airChart"></canvas>
   <canvas id="volumeChart"></canvas>
-
   <script>
-    // Konfigurasi Firebase
-    const firebaseConfig = {
-      databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/"
-    };
+    const firebaseConfig = { databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/" };
     firebase.initializeApp(firebaseConfig);
     const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
 
-    // Fungsi Membuat Chart
-    function createChart(canvasId, label, color) {
-      const ctx = document.getElementById(canvasId).getContext('2d');
-      return new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: [],
-          datasets: [{
-            label,
-            data: [],
-            borderColor: color,
-            backgroundColor: color + '33',
-            fill: true,
-            tension: 0.3
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: {
-            legend: { display: true },
-            tooltip: { mode: 'index', intersect: false }
-          },
-          scales: {
-            x: { title: { display: true, text: 'Waktu' } },
-            y: { beginAtZero: true }
-          }
-        }
-      });
-    }
-
-    // Inisialisasi Chart
-    const kelembabanChart = createChart('kelembabanChart', 'Kelembaban Tanah (%)', 'green');
-    const airChart = createChart('airChart', 'Ketinggian Air (cm)', 'blue');
-    const volumeChart = createChart('volumeChart', 'Volume Aktual (L)', 'orange');
-
-    // Fungsi untuk menambahkan data baru
-    function updateCharts(data) {
-      const dateStr = data.TimestampTanggal;
-      const timeStr = data.TimestampJam?.replace(/-/g, ':');
-      if (!dateStr || !timeStr) return;
-
-      const waktu = `${dateStr}T${timeStr}`;
-      const waktuLabel = new Date(waktu).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' ' + dateStr;
-
-      kelembabanChart.data.labels.push(waktuLabel);
-      kelembabanChart.data.datasets[0].data.push(data.KelembabanTanah || 0);
-      kelembabanChart.update();
-
-      airChart.data.labels.push(waktuLabel);
-      airChart.data.datasets[0].data.push(data.KetinggianAir || 0);
-      airChart.update();
-
-      volumeChart.data.labels.push(waktuLabel);
-      volumeChart.data.datasets[0].data.push(data.VolumeAktual || 0);
-      volumeChart.update();
-    }
-
-    // Realtime Listener
-    dataRef.on('value', snapshot => {
-      const data = snapshot.val();
-      if (!data) return;
-
-      // Kosongkan grafik dulu (opsional)
-      kelembabanChart.data.labels = [];
-      kelembabanChart.data.datasets[0].data = [];
-      airChart.data.labels = [];
-      airChart.data.datasets[0].data = [];
-      volumeChart.data.labels = [];
-      volumeChart.data.datasets[0].data = [];
-
-      // Jika hanya satu objek (bukan log), langsung tampilkan
-      updateCharts(data);
+    const createChart = (ctx, label, color) => new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
+      options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
     });
 
+    const kelembaban = createChart(document.getElementById('kelembabanChart').getContext('2d'), 'Kelembaban Tanah (%)', 'green');
+    const air = createChart(document.getElementById('airChart').getContext('2d'), 'Ketinggian Air (cm)', 'blue');
+    const volume = createChart(document.getElementById('volumeChart').getContext('2d'), 'Volume Aktual (L)', 'orange');
+
+    const addData = (chart, label, value) => {
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(value);
+      if (chart.data.labels.length > 20) chart.data.labels.shift(), chart.data.datasets[0].data.shift();
+      chart.update();
+    };
+
+    dataRef.on('value', snap => {
+      const d = snap.val();
+      const now = new Date().toLocaleTimeString('id-ID');
+      if (d) {
+        addData(kelembaban, now, d.KelembabanTanah || 0);
+        addData(air, now, d.KetinggianAir || 0);
+        addData(volume, now, d.VolumeAktual || 0);
+      }
+    });
   </script>
 </body>
 </html>

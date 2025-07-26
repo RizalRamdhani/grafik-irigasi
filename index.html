@@ -9,46 +9,128 @@
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
     canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
+    button { margin-right: 10px; margin-bottom: 20px; }
   </style>
 </head>
 <body>
-  <h2>📈 Grafik Irigasi Otomatis (Realtime)</h2>
+  <h2>📈 Grafik Irigasi Otomatis</h2>
+  <div>
+    <button onclick="loadData('realtime')">Realtime (per Detik)</button>
+    <button onclick="loadData('daily')">Per Hari</button>
+    <button onclick="loadData('weekly')">Per Minggu</button>
+  </div>
   <canvas id="kelembabanChart"></canvas>
   <canvas id="airChart"></canvas>
   <canvas id="volumeChart"></canvas>
+
   <script>
-    const firebaseConfig = { databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/" };
+    const firebaseConfig = {
+      databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/"
+    };
     firebase.initializeApp(firebaseConfig);
-    const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
+    const db = firebase.database();
 
     const createChart = (ctx, label, color) => new Chart(ctx, {
       type: 'line',
-      data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
-      options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
+      data: {
+        labels: [],
+        datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.3 }]
+      },
+      options: {
+        scales: {
+          x: { title: { display: true, text: 'Waktu' } },
+          y: { beginAtZero: true }
+        }
+      }
     });
 
     const kelembaban = createChart(document.getElementById('kelembabanChart').getContext('2d'), 'Kelembaban Tanah (%)', 'green');
     const air = createChart(document.getElementById('airChart').getContext('2d'), 'Ketinggian Air (cm)', 'blue');
     const volume = createChart(document.getElementById('volumeChart').getContext('2d'), 'Volume Aktual (L)', 'orange');
 
-    const addData = (chart, label, value) => {
-      chart.data.labels.push(label);
-      chart.data.datasets[0].data.push(value);
-      if (chart.data.labels.length > 20) chart.data.labels.shift(), chart.data.datasets[0].data.shift();
+    function updateChart(chart, labels, values) {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = values;
       chart.update();
-    };
+    }
 
-    dataRef.on('value', snap => {
-      const d = snap.val();
-      const now = new Date().toLocaleTimeString('id-ID');
-      if (d) {
-        addData(kelembaban, now, d.KelembabanTanah || 0);
-        addData(air, now, d.KetinggianAir || 0);
-        addData(volume, now, d.VolumeAktual || 0);
+    async function loadData(mode) {
+      const snapshot = await db.ref("IrigasiOtomatis/History").once('value');
+      const rawData = snapshot.val();
+      if (!rawData) return;
+
+      const kelembabanData = [], airData = [], volumeData = [], labels = [];
+
+      const grouped = {};
+
+      Object.entries(rawData).forEach(([key, entry]) => {
+        if (!entry.timestamp) return;
+
+        const date = new Date(entry.timestamp);
+        const formattedTime = date.toLocaleTimeString('id-ID');
+        const formattedDate = date.toLocaleDateString('id-ID');
+
+        if (mode === 'realtime') {
+          labels.push(formattedTime);
+          kelembabanData.push(entry.KelembabanTanah || 0);
+          airData.push(entry.KetinggianAir || 0);
+          volumeData.push(entry.VolumeAktual || 0);
+        }
+
+        if (mode === 'daily') {
+          const groupKey = formattedDate;
+          if (!grouped[groupKey]) {
+            grouped[groupKey] = { kelembaban: [], air: [], volume: [] };
+          }
+          grouped[groupKey].kelembaban.push(entry.KelembabanTanah || 0);
+          grouped[groupKey].air.push(entry.KetinggianAir || 0);
+          grouped[groupKey].volume.push(entry.VolumeAktual || 0);
+        }
+
+        if (mode === 'weekly') {
+          const weekNumber = getWeekNumber(date);
+          const yearWeek = `${date.getFullYear()}-W${weekNumber}`;
+          if (!grouped[yearWeek]) {
+            grouped[yearWeek] = { kelembaban: [], air: [], volume: [] };
+          }
+          grouped[yearWeek].kelembaban.push(entry.KelembabanTanah || 0);
+          grouped[yearWeek].air.push(entry.KetinggianAir || 0);
+          grouped[yearWeek].volume.push(entry.VolumeAktual || 0);
+        }
+      });
+
+      if (mode === 'daily' || mode === 'weekly') {
+        Object.entries(grouped).forEach(([groupLabel, values]) => {
+          labels.push(groupLabel);
+          kelembabanData.push(average(values.kelembaban));
+          airData.push(average(values.air));
+          volumeData.push(average(values.volume));
+        });
       }
-    });
+
+      updateChart(kelembaban, labels, kelembabanData);
+      updateChart(air, labels, airData);
+      updateChart(volume, labels, volumeData);
+    }
+
+    function average(arr) {
+      if (!arr.length) return 0;
+      return arr.reduce((a, b) => a + b, 0) / arr.length;
+    }
+
+    function getWeekNumber(d) {
+      d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+      return weekNo;
+    }
+
+    // Load realtime data by default
+    loadData('realtime');
   </script>
 </body>
 </html>
+
 
 

@@ -9,21 +9,17 @@
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
     canvas { margin-bottom: 40px; max-width: 100%; height: auto; display: none; }
-    h3 { margin-top: 50px; }
     button { padding: 10px 15px; margin-right: 10px; cursor: pointer; }
+    h2, h3 { margin-top: 30px; }
   </style>
 </head>
 <body>
-  <h2>📈 Grafik Irigasi Otomatis</h2>
+  <h2>📊 Grafik Irigasi Otomatis</h2>
 
-  <h3>Real-time (Perdetik)</h3>
-  <canvas id="kelembabanRealtime"></canvas>
-  <canvas id="airRealtime"></canvas>
-  <canvas id="volumeRealtime"></canvas>
-
-  <h3>Data Historis</h3>
-  <button onclick="showDaily()">Tampilkan Per Hari (Hari Ini)</button>
-  <button onclick="showWeekly()">Tampilkan Per Minggu (7 Hari Terakhir)</button>
+  <div>
+    <button onclick="showDaily()">Tampilkan Per Hari (Hari Ini)</button>
+    <button onclick="showWeekly()">Tampilkan Per Minggu (7 Hari Terakhir)</button>
+  </div>
 
   <canvas id="dailyAvgChart"></canvas>
   <canvas id="weeklyAvgChart"></canvas>
@@ -36,51 +32,9 @@
     firebase.initializeApp(firebaseConfig);
     const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
 
-    const logs = []; // Menyimpan data yang diterima dari Firebase untuk pengolahan per hari/minggu
+    const logs = [];
 
-    // Utilitas membuat grafik
-    const createChart = (ctx, label, color) => new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
-      options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
-    });
-
-    // Grafik real-time
-    const kelembabanChart = createChart(document.getElementById('kelembabanRealtime'), 'Kelembaban Tanah (%)', 'green');
-    const airChart = createChart(document.getElementById('airRealtime'), 'Ketinggian Air (cm)', 'blue');
-    const volumeChart = createChart(document.getElementById('volumeRealtime'), 'Volume Aktual (L)', 'orange');
-
-    const addData = (chart, label, value) => {
-      chart.data.labels.push(label);
-      chart.data.datasets[0].data.push(value);
-      if (chart.data.labels.length > 20) {
-        chart.data.labels.shift();
-        chart.data.datasets[0].data.shift();
-      }
-      chart.update();
-    };
-
-    // Update real-time dan simpan ke logs
-    dataRef.on('value', snapshot => {
-      const data = snapshot.val();
-      const now = new Date();
-      const label = now.toLocaleTimeString('id-ID');
-
-      if (data) {
-        addData(kelembabanChart, label, data.KelembabanTanah || 0);
-        addData(airChart, label, data.KetinggianAir || 0);
-        addData(volumeChart, label, data.VolumeAktual || 0);
-
-        logs.push({
-          timestamp: now.toISOString(),
-          KelembabanTanah: data.KelembabanTanah || 0,
-          KetinggianAir: data.KetinggianAir || 0,
-          VolumeAktual: data.VolumeAktual || 0
-        });
-      }
-    });
-
-    // CHARTS untuk per hari dan per minggu
+    // CHARTS
     const dailyChart = new Chart(document.getElementById('dailyAvgChart'), {
       type: 'bar',
       data: {
@@ -107,7 +61,21 @@
       options: { scales: { y: { beginAtZero: true } } }
     });
 
-    // Fungsi hitung rata-rata per jam hari ini
+    // Simpan data yang datang dari Firebase secara real-time
+    dataRef.on('value', snapshot => {
+      const data = snapshot.val();
+      const now = new Date();
+      if (data) {
+        logs.push({
+          timestamp: now.toISOString(),
+          KelembabanTanah: data.KelembabanTanah || 0,
+          KetinggianAir: data.KetinggianAir || 0,
+          VolumeAktual: data.VolumeAktual || 0
+        });
+      }
+    });
+
+    // Fungsi untuk menampilkan data per jam (hari ini)
     function showDaily() {
       document.getElementById('dailyAvgChart').style.display = 'block';
       document.getElementById('weeklyAvgChart').style.display = 'none';
@@ -142,7 +110,7 @@
       dailyChart.update();
     }
 
-    // Fungsi hitung rata-rata per hari selama 7 hari
+    // Fungsi untuk menampilkan data per hari (7 hari terakhir)
     function showWeekly() {
       document.getElementById('weeklyAvgChart').style.display = 'block';
       document.getElementById('dailyAvgChart').style.display = 'none';

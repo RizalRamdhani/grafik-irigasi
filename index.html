@@ -8,8 +8,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; }
-    canvas { margin-bottom: 40px; max-width: 100%; height: auto; }
+    canvas { margin-bottom: 40px; max-width: 100%; height: auto; display: none; }
     h3 { margin-top: 50px; }
+    button { padding: 10px 15px; margin-right: 10px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -20,28 +21,31 @@
   <canvas id="airRealtime"></canvas>
   <canvas id="volumeRealtime"></canvas>
 
-  <h3>Rata-rata Per Hari (Hari Ini)</h3>
-  <canvas id="dailyAvgChart"></canvas>
+  <h3>Data Historis</h3>
+  <button onclick="showDaily()">Tampilkan Per Hari (Hari Ini)</button>
+  <button onclick="showWeekly()">Tampilkan Per Minggu (7 Hari Terakhir)</button>
 
-  <h3>Rata-rata Per Minggu (7 Hari Terakhir)</h3>
+  <canvas id="dailyAvgChart"></canvas>
   <canvas id="weeklyAvgChart"></canvas>
 
   <script>
-    // Inisialisasi Firebase
+    // Konfigurasi Firebase
     const firebaseConfig = {
       databaseURL: "https://irigasi-9a2b9-default-rtdb.firebaseio.com/"
     };
     firebase.initializeApp(firebaseConfig);
     const dataRef = firebase.database().ref("IrigasiOtomatis/Data");
 
-    // Utility Chart Builder
+    const logs = []; // Menyimpan data yang diterima dari Firebase untuk pengolahan per hari/minggu
+
+    // Utilitas membuat grafik
     const createChart = (ctx, label, color) => new Chart(ctx, {
       type: 'line',
       data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false, tension: 0.2 }] },
       options: { scales: { x: { title: { display: true, text: 'Waktu' } }, y: { beginAtZero: true } } }
     });
 
-    // Chart Real-time
+    // Grafik real-time
     const kelembabanChart = createChart(document.getElementById('kelembabanRealtime'), 'Kelembaban Tanah (%)', 'green');
     const airChart = createChart(document.getElementById('airRealtime'), 'Ketinggian Air (cm)', 'blue');
     const volumeChart = createChart(document.getElementById('volumeRealtime'), 'Volume Aktual (L)', 'orange');
@@ -56,7 +60,7 @@
       chart.update();
     };
 
-    // Realtime update
+    // Update real-time dan simpan ke logs
     dataRef.on('value', snapshot => {
       const data = snapshot.val();
       const now = new Date();
@@ -66,11 +70,18 @@
         addData(kelembabanChart, label, data.KelembabanTanah || 0);
         addData(airChart, label, data.KetinggianAir || 0);
         addData(volumeChart, label, data.VolumeAktual || 0);
+
+        logs.push({
+          timestamp: now.toISOString(),
+          KelembabanTanah: data.KelembabanTanah || 0,
+          KetinggianAir: data.KetinggianAir || 0,
+          VolumeAktual: data.VolumeAktual || 0
+        });
       }
     });
 
-    // Data Historis (rata-rata harian dan mingguan)
-    const dailyAvgChart = new Chart(document.getElementById('dailyAvgChart'), {
+    // CHARTS untuk per hari dan per minggu
+    const dailyChart = new Chart(document.getElementById('dailyAvgChart'), {
       type: 'bar',
       data: {
         labels: [],
@@ -80,13 +91,10 @@
           { label: 'Volume (L)', data: [], backgroundColor: 'orange' }
         ]
       },
-      options: {
-        responsive: true,
-        scales: { x: { stacked: true }, y: { beginAtZero: true } }
-      }
+      options: { scales: { y: { beginAtZero: true } } }
     });
 
-    const weeklyAvgChart = new Chart(document.getElementById('weeklyAvgChart'), {
+    const weeklyChart = new Chart(document.getElementById('weeklyAvgChart'), {
       type: 'line',
       data: {
         labels: [],
@@ -96,72 +104,81 @@
           { label: 'Volume (L)', data: [], borderColor: 'orange', fill: false }
         ]
       },
-      options: {
-        responsive: true,
-        scales: { y: { beginAtZero: true } }
-      }
+      options: { scales: { y: { beginAtZero: true } } }
     });
 
-    // Ambil data historis dari path yang sama
-    dataRef.parent.on('value', (snapshot) => {
-      const allData = snapshot.val();
-      const daily = {}, weekly = {};
+    // Fungsi hitung rata-rata per jam hari ini
+    function showDaily() {
+      document.getElementById('dailyAvgChart').style.display = 'block';
+      document.getElementById('weeklyAvgChart').style.display = 'none';
 
       const now = new Date();
       const today = now.toISOString().split('T')[0];
+      const hourly = {};
 
-      for (let key in allData.DataHistory || {}) {
-        const entry = allData.DataHistory[key];
-        const time = new Date(entry.timestamp);
-        const dateStr = time.toISOString().split('T')[0];
-
-        // Daily (hari ini)
+      logs.forEach(entry => {
+        const date = new Date(entry.timestamp);
+        const dateStr = date.toISOString().split('T')[0];
         if (dateStr === today) {
-          const hour = time.getHours();
-          if (!daily[hour]) daily[hour] = { kelembaban: 0, air: 0, volume: 0, count: 0 };
-          daily[hour].kelembaban += entry.KelembabanTanah || 0;
-          daily[hour].air += entry.KetinggianAir || 0;
-          daily[hour].volume += entry.VolumeAktual || 0;
-          daily[hour].count++;
+          const hour = date.getHours();
+          if (!hourly[hour]) hourly[hour] = { k: 0, a: 0, v: 0, count: 0 };
+          hourly[hour].k += entry.KelembabanTanah;
+          hourly[hour].a += entry.KetinggianAir;
+          hourly[hour].v += entry.VolumeAktual;
+          hourly[hour].count++;
         }
+      });
 
-        // Weekly
-        const diffDays = (now - time) / (1000 * 60 * 60 * 24);
-        if (diffDays <= 7) {
-          if (!weekly[dateStr]) weekly[dateStr] = { kelembaban: 0, air: 0, volume: 0, count: 0 };
-          weekly[dateStr].kelembaban += entry.KelembabanTanah || 0;
-          weekly[dateStr].air += entry.KetinggianAir || 0;
-          weekly[dateStr].volume += entry.VolumeAktual || 0;
-          weekly[dateStr].count++;
+      dailyChart.data.labels = [];
+      dailyChart.data.datasets.forEach(ds => ds.data = []);
+      for (let h = 0; h < 24; h++) {
+        if (hourly[h]) {
+          dailyChart.data.labels.push(`${h}:00`);
+          dailyChart.data.datasets[0].data.push((hourly[h].k / hourly[h].count).toFixed(2));
+          dailyChart.data.datasets[1].data.push((hourly[h].a / hourly[h].count).toFixed(2));
+          dailyChart.data.datasets[2].data.push((hourly[h].v / hourly[h].count).toFixed(2));
         }
       }
+      dailyChart.update();
+    }
 
-      // Tampilkan rata-rata harian
-      dailyAvgChart.data.labels = [];
-      dailyAvgChart.data.datasets.forEach(ds => ds.data = []);
-      for (let hour in daily) {
-        dailyAvgChart.data.labels.push(`${hour}:00`);
-        dailyAvgChart.data.datasets[0].data.push((daily[hour].kelembaban / daily[hour].count).toFixed(2));
-        dailyAvgChart.data.datasets[1].data.push((daily[hour].air / daily[hour].count).toFixed(2));
-        dailyAvgChart.data.datasets[2].data.push((daily[hour].volume / daily[hour].count).toFixed(2));
-      }
-      dailyAvgChart.update();
+    // Fungsi hitung rata-rata per hari selama 7 hari
+    function showWeekly() {
+      document.getElementById('weeklyAvgChart').style.display = 'block';
+      document.getElementById('dailyAvgChart').style.display = 'none';
 
-      // Tampilkan rata-rata mingguan
-      weeklyAvgChart.data.labels = [];
-      weeklyAvgChart.data.datasets.forEach(ds => ds.data = []);
-      const sortedWeekly = Object.keys(weekly).sort();
-      for (let d of sortedWeekly) {
-        weeklyAvgChart.data.labels.push(d);
-        weeklyAvgChart.data.datasets[0].data.push((weekly[d].kelembaban / weekly[d].count).toFixed(2));
-        weeklyAvgChart.data.datasets[1].data.push((weekly[d].air / weekly[d].count).toFixed(2));
-        weeklyAvgChart.data.datasets[2].data.push((weekly[d].volume / weekly[d].count).toFixed(2));
-      }
-      weeklyAvgChart.update();
-    });
+      const now = new Date();
+      const days = {};
+
+      logs.forEach(entry => {
+        const date = new Date(entry.timestamp);
+        const diff = (now - date) / (1000 * 60 * 60 * 24);
+        if (diff <= 7) {
+          const d = date.toISOString().split('T')[0];
+          if (!days[d]) days[d] = { k: 0, a: 0, v: 0, count: 0 };
+          days[d].k += entry.KelembabanTanah;
+          days[d].a += entry.KetinggianAir;
+          days[d].v += entry.VolumeAktual;
+          days[d].count++;
+        }
+      });
+
+      weeklyChart.data.labels = [];
+      weeklyChart.data.datasets.forEach(ds => ds.data = []);
+      const sorted = Object.keys(days).sort();
+      sorted.forEach(d => {
+        weeklyChart.data.labels.push(d);
+        weeklyChart.data.datasets[0].data.push((days[d].k / days[d].count).toFixed(2));
+        weeklyChart.data.datasets[1].data.push((days[d].a / days[d].count).toFixed(2));
+        weeklyChart.data.datasets[2].data.push((days[d].v / days[d].count).toFixed(2));
+      });
+
+      weeklyChart.update();
+    }
   </script>
 </body>
 </html>
+
 
 
 
